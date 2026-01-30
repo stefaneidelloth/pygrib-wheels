@@ -30,7 +30,7 @@ jobs:
           - os: macos-15-intel
             python-osx-ver: "10.9"
         exclude:
-          # Free-threaded cp314t is not (yet) buildable with conda on Windows
+          # Free-threaded cp314t on Windows requires a special toolchain/interpreter
           - os: windows-latest
             python-version: "3.14t"
 
@@ -53,13 +53,14 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Set up Python ${{ matrix.python-version }}
+      # ---------- Linux/macOS path (multibuild) ----------
+      - name: Set up Python ${{ matrix.python-version }} (non-Windows)
+        if: runner.os != 'Windows'
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
-      # ---------- COMMON ENV ----------
-      - name: Set common env
+      - name: Set common env (non-Windows)
         if: runner.os != 'Windows'
         shell: bash
         run: |
@@ -112,11 +113,11 @@ jobs:
           echo "PLAT: ${PLAT}"
           echo "DOCKER_TEST_IMAGE: ${DOCKER_TEST_IMAGE}"
 
-      - name: Upgrade pip
+      - name: Upgrade pip (non-Windows)
+        if: runner.os != 'Windows'
         shell: bash
         run: python -m pip install --upgrade pip
 
-      # ---------- LINUX & MACOS: multibuild ----------
       - name: Build wheels with multibuild (Linux/macOS)
         if: runner.os != 'Windows'
         shell: bash
@@ -140,15 +141,11 @@ jobs:
           echo "------- LIST WHEELHOUSE --------"
           ls -l wheelhouse/ || true
 
-      # ---------- WINDOWS: conda eccodes + delvewheel ----------
-      # Windows builds use conda-forge eccodes (recommended in pygrib docs for Windows)
-      # and 'delvewheel repair' to bundle all required DLLs into the wheel.
-      
+      # ---------- Windows path (Miniforge + conda-forge eccodes + no-isolation build + delvewheel) ----------
       - name: Set up Miniforge (Windows)
         if: runner.os == 'Windows'
         uses: conda-incubator/setup-miniconda@v3
         with:
-          # Use Miniforge3, not Mambaforge (which is sunset)
           miniforge-variant: Miniforge3
           miniforge-version: latest
           channels: conda-forge
@@ -156,30 +153,28 @@ jobs:
           activate-environment: build
           python-version: ${{ matrix.python-version }}
 
-
       - name: Install ecCodes and build deps (Windows)
         if: runner.os == 'Windows'
         shell: bash -l {0}
         run: |
-          mamba install -y eccodes cmake ninja zlib libpng openjpeg
-          python -m pip install -U pip build delvewheel numpy cython pyproj
+          mamba install -y -c conda-forge eccodes openjpeg libpng zlib cmake ninja
+          python -m pip install -U pip setuptools wheel build cython numpy pyproj delvewheel
 
-      - name: Build wheel (Windows) with ecCodes from conda
+      - name: Build wheel (Windows) with ecCodes from conda (no isolation)
         if: runner.os == 'Windows'
         shell: bash -l {0}
         run: |
           set -euxo pipefail
-          # Point pygrib's build to ecCodes from conda
           export ECCODES_DIR="${CONDA_PREFIX}/Library"
+          export ECCODES_DEFINITION_PATH="${CONDA_PREFIX}/Library/share/eccodes/definitions"
           cd "$GITHUB_WORKSPACE/${REPO_DIR}"
-          python -m build --wheel -n
+          python -m build --wheel --no-isolation
           mkdir -p "$GITHUB_WORKSPACE/wheelhouse"
-          # Bundle DLLs from ecCodes into the wheel using delvewheel
           WHEEL_PATH=$(ls dist/pygrib-*.whl)
           python -m delvewheel repair --add-path "${CONDA_PREFIX}/Library/bin" -w "$GITHUB_WORKSPACE/wheelhouse" "$WHEEL_PATH"
           ls -l "$GITHUB_WORKSPACE/wheelhouse"
 
-      # ---------- ARTIFACTS ----------
+      # ---------- Artifacts for every OS/Python ----------
       - name: Upload built wheels as artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -187,7 +182,7 @@ jobs:
           path: wheelhouse/*.whl
           if-no-files-found: error
 
-      # ---------- RELEASE ON TAG (optional) ----------
+      # ---------- Optional: upload wheels to a GitHub Release on tag ----------
       - name: Upload wheels to GitHub Release
         uses: svenstaro/upload-release-action@v2
         if: github.event_name == 'create'
