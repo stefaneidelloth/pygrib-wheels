@@ -21,7 +21,7 @@ jobs:
         os: [
           ubuntu-latest,       # Linux x86_64
           ubuntu-24.04-arm,   # Linux aarch64
-          macos-latest,       # macOS (Apple Silicon runner)
+          macos-latest,       # macOS (ARM64 runner)
           macos-15-intel,     # macOS Intel runner
           windows-latest      # Windows x86_64
         ]
@@ -30,7 +30,7 @@ jobs:
           - os: macos-15-intel
             python-osx-ver: "10.9"
         exclude:
-          # Free-threaded cp314t on Windows requires a special toolchain/interpreter
+          # Free-threaded cp314t on Windows later (needs separate toolchain/interpreter)
           - os: windows-latest
             python-version: "3.14t"
 
@@ -141,7 +141,7 @@ jobs:
           echo "------- LIST WHEELHOUSE --------"
           ls -l wheelhouse/ || true
 
-      # ---------- Windows path (Miniforge + conda-forge eccodes + no-isolation build + delvewheel) ----------
+      # ---------- Windows path (Miniforge + conda-forge eccodes + Cython 3.0.x pin + patch + delvewheel) ----------
       - name: Set up Miniforge (Windows)
         if: runner.os == 'Windows'
         uses: conda-incubator/setup-miniconda@v3
@@ -158,17 +158,43 @@ jobs:
         shell: bash -l {0}
         run: |
           mamba install -y -c conda-forge eccodes openjpeg libpng zlib cmake ninja
-          python -m pip install -U pip setuptools wheel build cython numpy pyproj delvewheel
+          # Neutralize any existing Cython and hard-pin to last 3.0.x (workaround for Cython 3.1+ 'long' issue)
+          python -m pip uninstall -y Cython || true
+          python -m pip install -U pip setuptools wheel "Cython==3.0.10" numpy pyproj build delvewheel
+          python - << "PY"
+import Cython, sys
+print("Cython:", Cython.__version__, "| Python:", sys.version)
+PY
+
+      - name: Patch _pygrib.pyx for Cython 3.1+ compatibility (Windows)
+        if: runner.os == 'Windows'
+        shell: bash -l {0}
+        run: |
+          set -euxo pipefail
+          cd "$GITHUB_WORKSPACE/${REPO_DIR}"
+          PYX="src/pygrib/_pygrib.pyx"
+          # Insert alias once right after "import pyproj"
+          if ! grep -q "from ctypes import c_long as long" "$PYX"; then
+            sed -i '0,/import pyproj/s//import pyproj\nfrom ctypes import c_long as long/' "$PYX"
+          fi
+          # Show first ~120 lines for diagnostics
+          nl -ba "$PYX" | sed -n '1,120p'
 
       - name: Build wheel (Windows) with ecCodes from conda (no isolation)
         if: runner.os == 'Windows'
         shell: bash -l {0}
         run: |
           set -euxo pipefail
+          # ecCodes locations from conda-forge install (as in pygrib docs)
           export ECCODES_DIR="${CONDA_PREFIX}/Library"
           export ECCODES_DEFINITION_PATH="${CONDA_PREFIX}/Library/share/eccodes/definitions"
+          # Optional explicit include/lib hints:
+          export ECCODES_INCDIR="${CONDA_PREFIX}/Library/include"
+          export ECCODES_LIBDIR="${CONDA_PREFIX}/Library/lib"
+
           cd "$GITHUB_WORKSPACE/${REPO_DIR}"
           python -m build --wheel --no-isolation
+
           mkdir -p "$GITHUB_WORKSPACE/wheelhouse"
           WHEEL_PATH=$(ls dist/pygrib-*.whl)
           python -m delvewheel repair --add-path "${CONDA_PREFIX}/Library/bin" -w "$GITHUB_WORKSPACE/wheelhouse" "$WHEEL_PATH"
