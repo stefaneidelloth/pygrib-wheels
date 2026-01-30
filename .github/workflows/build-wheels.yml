@@ -143,16 +143,19 @@ jobs:
       # ---------- WINDOWS: conda eccodes + delvewheel ----------
       # Windows builds use conda-forge eccodes (recommended in pygrib docs for Windows)
       # and 'delvewheel repair' to bundle all required DLLs into the wheel.
-      - name: Set up Mambaforge (Windows)
+      
+      - name: Set up Miniforge (Windows)
         if: runner.os == 'Windows'
         uses: conda-incubator/setup-miniconda@v3
         with:
-          miniforge-variant: Mambaforge
+          # Use Miniforge3, not Mambaforge (which is sunset)
+          miniforge-variant: Miniforge3
           miniforge-version: latest
           channels: conda-forge
           channel-priority: strict
           activate-environment: build
           python-version: ${{ matrix.python-version }}
+
 
       - name: Install ecCodes and build deps (Windows)
         if: runner.os == 'Windows'
