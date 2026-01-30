@@ -112,4 +112,13 @@ jobs:
         echo "TRAVIS_OS_NAME: ${TRAVIS_OS_NAME}"
         echo "PLAT: ${PLAT}"
         echo "DOCKER_TEST_IMAGE: ${DOCKER_TEST_IMAGE}"
+        
+    
+    - name: Upload built wheels as artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: pygrib-wheels-${{ matrix.os }}-${{ matrix.python-version }}
+        path: wheelhouse/*.whl
+        if-no-files-found: error
+
 
